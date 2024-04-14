@@ -1,0 +1,690 @@
+---
+title: "Capstone project (Tasks 1 and 2)"
+author: "Pavel Zakharov"
+date: "2024-04-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, results='asis')
+```
+
+
+# Introduction
+
+In many applications or devices when we type the text there is the option to suggest the next word providing several options. Sometimes it helps, sometimes it makes you crazy …
+
+If we imagine ourselves predicting next word based on previous input words, we understand that it is enormously difficult task. 
+
+“my dog is ….” (running, jumping, sleeping …?), “he is a …” (driver, husband, boy …?) Really hard to make decision!
+
+Two important things that are clear from mental simulation of words prediction
+
+- The longer is the input line of words the better is the prediction: it is impossible to predict reasonably based on 1-2 words, 3-4 words input is the limit when your prediction starts to make sense.
+
+- Probability of prediction of one specific word is not high, you always have in mind 5-10 words that match the input text.
+
+# Overview
+
+The objective of the project is to build the model that predicts the next word based on previous input text and realize it in Shiny application.
+
+In the course of the project, we will compare 2 popular word prediction models (backoff and interpolation) and analyze their performance for different volumes of training data.
+
+Based on this analysis the most efficient solution will be chosen and implemented in the form of Shiny application.
+
+
+### Application requirement 
+
+- It should run on mobile devices to predict the next word in typing process, so it should not be “heavy” in terms of memory (several dozens of MB as a maximum) and in terms of computing (computing time should be “immediate”, less than a second).
+- It should be based on Ngram approach (there are more advanced generative AI and LLM models that are out of project scope).
+
+### Project steps 
+
+1. Obtain the data set. Divide it into training, validation, testing sub-sets.
+2. Clean and analyse the training data.
+3. Build the optimal model for word prediction.
+
+        3a. Identify the model options.
+        3b. Build and “train” the models based on training data.
+        3c. Evaluate the models based on cleaned validation data.
+        
+4. Evaluate the selected model based on cleaned testing data.
+5. Deploy it in Shiny server for users to try.
+
+### Questions to consider
+
+- What part of provided data set to use?
+- How to clean the data?
+- How can we optimize the N-gram model in terms of volume?
+- What are the options of prediction models?
+- How can we assess and compare the quality of models?
+- What is the required number of words as the input to make prediction?
+- What is the model accuracy?
+
+# Data
+
+
+### Loading data
+
+The data was loaded from
+https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip
+
+Data includes 3 files: blogs, news and twitter.
+
+```{r prt_01, echo=FALSE}
+## reading data files
+set.seed(1234)
+library(backports)
+library(knitr)
+
+setwd("~/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US")
+blogs <- readLines("en_US.blogs.txt")
+news <- readLines("en_US.news.txt")
+twitter <- readLines("en_US.twitter.txt")
+
+```
+
+
+### Data analysis
+
+```{r prt_02, echo=FALSE}
+## Folders for data
+full_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US_full/" ## Ngrams without adjustments
+adjusted_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US/" ## Ngrams with adjustments
+current_folder <- adjusted_folder
+
+## Data analysis
+
+files <- c("en_US.blogs.txt","en_US.news.txt","en_US.twitter.txt")
+
+## Number of Lines
+lines.blogs <- length(blogs)
+lines.news <- length(news)
+lines.twitter <- length(twitter)
+lines <- c(lines.blogs, lines.news, lines.twitter) 
+
+## Number of Words
+suppressPackageStartupMessages(library(stringi))
+
+words.blogs <- sum(stri_count_words(blogs))
+words.news <- sum(stri_count_words(news))
+words.twitter <- sum(stri_count_words(twitter))
+words <- c(words.blogs, words.news, words.twitter)
+
+## size of files in MB
+size.blogs <- object.size(blogs)/1000000
+size.news <- object.size(news)/1000000
+size.twitter <- object.size(twitter)/1000000
+size_MB <- c(round(size.blogs,0), round(size.news,0), round(size.twitter,0))
+
+files_summary <- data.frame(files, lines, words, size_MB)
+kable(files_summary)
+```
+
+As we see the provided data has huge number of lines and words, large volume size in MB. 
+
+That means (based on solution requirements stated above) that we will need to use only the small part of data to construct the model. The good side is that we have a lot of data for validation and testing purposes.
+
+Moving forward based on plan above we will need to make important decisions on scope of data to use, data splitting into training, validation and testing sub-sets and on data cleaning. 
+
+### Creation of data subsets
+
+Initial data sets were divided into 3 non-overlapping parts: 60% training, 20% validation, 20% testing.
+
+```{r prt_03, echo=FALSE}
+## Creation of training, validation and testing data sub-sets
+
+Source <- c("blogs","news","twitter")
+
+## divide into training, validation and test parts 60/20/20 without overlap
+blogs.s <- blogs[1:(lines.blogs*.6)]
+blogs.v <- blogs[(lines.blogs*.6+1):(lines.blogs*.8)]
+blogs.t <- blogs[(lines.blogs*.8+1):lines.blogs]
+news.s <- news[1:(lines.news*.6)]
+news.v <- news[(lines.news*.6+1):(lines.news*.8)]
+news.t <- news[(lines.news*.8+1):lines.news]
+twitter.s <- twitter[1:(lines.twitter*.6)]
+twitter.v <- twitter[(lines.twitter*.6+1):(lines.twitter*.8)]
+twitter.t <- twitter[(lines.twitter*.8+1):lines.twitter]
+
+training <- c(length(blogs.s),length(news.s),length(twitter.s))
+validation <- c(length(blogs.v),length(news.v),length(twitter.v))
+testing <- c(length(blogs.t),length(news.t),length(twitter.t))
+
+cat("Number of lines in data sets \n")
+files_summary <- data.frame(Source, training, validation, testing)
+kable(files_summary)
+
+rm(blogs, news, twitter)
+```
+
+Still these parts are too large to use. We are taking randomly small parts from all data-sets and will use them in the project. 
+
+```{r prt_04, echo=FALSE}
+## Taking smaller part (prt %) of data sets for model development and testing
+
+prt <- 0.04 ## percentage of data set to use
+cat(paste("Smaller data sub-sets (",prt*100,"%) for model development and testing \n"))
+
+set.seed(345)
+metric <- c("lines","words")
+
+## training sub-set
+sample.blogs <- sample(blogs.s, length(blogs.s) * prt)
+sample.news <- sample(news.s, length(news.s) * prt)
+sample.twitter <- sample(twitter.s, length(twitter.s) * prt)
+sample.all <- c(sample.blogs, sample.news, sample.twitter)
+writeLines(sample.all,"training_data.txt")
+training <- c(length(sample.all),sum(stri_count_words(sample.all)))
+rm(sample.blogs, sample.news, sample.twitter, blogs.s, news.s, twitter.s)
+
+## validation sub-set
+val.blogs <- sample(blogs.v, length(blogs.v) * prt)
+val.news <- sample(news.v, length(news.v) * prt)
+val.twitter <- sample(twitter.v, length(twitter.v) * prt)
+val.all <- c(val.blogs, val.news, val.twitter)
+writeLines(val.all,"validation_data.txt")
+validation <- c(length(val.all),sum(stri_count_words(val.all)))
+rm(val.blogs, val.news, val.twitter, val.all,blogs.v, news.v, twitter.v)
+
+## testing sub-set
+tst.blogs <- sample(blogs.t, length(blogs.t) * prt)
+tst.news <- sample(news.t, length(news.t) * prt)
+tst.twitter <- sample(twitter.t, length(twitter.t) * prt)
+tst.all <- c(tst.blogs, tst.news, tst.twitter)
+writeLines(tst.all,"testing_data.txt")
+testing <- c(length(tst.all),sum(stri_count_words(tst.all)))
+rm(tst.blogs, tst.news, tst.twitter, tst.all, blogs.t, news.t, twitter.t)
+
+subset_summary <- data.frame(metric, training, validation, testing)
+kable(subset_summary)
+```
+
+### Data cleaning
+
+We are cleaning the training text by 1) converting to lowercase, 2) removing numbers, 3) removing special symbols, 4) removing punctuation, 5) removing extra white spaces. 
+
+We are not removing stop words and "bad" words assuming that they are statistically not important.
+
+```{r prt_05, echo=FALSE}
+## Cleaning of training sub-set
+
+## temp
+## sample.all <- readLines("training_data.txt")
+
+suppressPackageStartupMessages(library(NLP))
+suppressPackageStartupMessages(library(tm))
+suppressPackageStartupMessages(library(stringi))
+suppressPackageStartupMessages(library(stringr))
+
+corpus <- VCorpus(VectorSource(sample.all))
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, content_transformer(function(x){str_replace_all(x, "[^[\\da-zA-Z - ' ]]"," ")}))
+corpus <- tm_map(corpus, content_transformer(function(x){removePunctuation(x, preserve_intra_word_contractions = TRUE, preserve_intra_word_dashes = TRUE)}))
+corpus <- tm_map(corpus, stripWhitespace)
+
+saveRDS(corpus,file="cleaned_corpus.Rds")
+
+cat(paste("Cleaned corpus training text file:",length(corpus)," lines, ",round(object.size(corpus)/1000000,0)," MB \n\n"))
+
+rm(sample.all)
+```
+
+### N-gram creation and analysis
+
+Based on cleaned corpus file we are creating 1-, 2-, 3-, 4-grams and analyzing them to make decision on prediction model.
+
+Below is the Ngram information for training data set. It looks very interesting. 
+
+Important observations
+
+- There are 64 000 of unique words in 1.3 million of total words.
+
+- If you define the first word on average there are 10 options for the next word
+
+- If you define the first two words on average there are 2 options for the next word
+
+- If you define the first three words on average there is 1 option for the next word
+
+These numbers are supporting our feeling that to predict reliably next word you need at least 3 words as the input.
+
+They demonstrate very high sparsity of data. The number of Ngrams tends to stabilize with growth of N rather than grow exponentially. This is the result of specifics of human speech construction and text size limitation. Ngrams give a set of very isolated path of words with huge white-space in between. 
+
+That means that further increase of Ngram level most probably will not increase substantially the quality of prediction, tetragrams are enough.
+
+Based on these numbers we it makes sense to measure the quality (or error) of prediction based on the prediction of the fourth word after the input of three words and limit the level of N-grams with N=4 (tetragrams).
+
+
+```{r prt_06, echo=FALSE}
+## Ngram creation and analysis
+
+## temp lines
+## corpus <- readRDS("cleaned_corpus.Rds")
+
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(wordcloud2))
+suppressPackageStartupMessages(library(tidytext))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+
+## Tokenizing functions (NLP)
+myTokenizer1 <- function(x) {
+  unlist(lapply(ngrams(words(x), 1), paste, collapse = " "), use.names = FALSE)
+}
+myTokenizer2 <- function(x) {
+  unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+}
+myTokenizer3 <- function(x) {
+  unlist(lapply(ngrams(words(x), 3), paste, collapse = " "), use.names = FALSE)
+}
+myTokenizer4 <- function(x) {
+  unlist(lapply(ngrams(words(x), 4), paste, collapse = " "), use.names = FALSE)
+}
+
+## unigram creation
+UniGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer1))
+UniGram <- tidy(UniGram) ## to df
+UniFreq <- aggregate(count~term,UniGram,sum)
+UniFreq <- arrange(UniFreq,desc(count))
+
+gp1 <- ggplot(UniFreq[1:20, ], aes(x = reorder(term, count), y = count, alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill="blue") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 1-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+BiGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer2))
+BiGram <- tidy(BiGram)
+BiFreq <- aggregate(count~term,BiGram,sum)
+BiFreq <- arrange(BiFreq,desc(count))
+
+gp2 <- ggplot(BiFreq[1:20, ], aes(x = reorder(term, count), y = count, alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill = "green") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 2-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+grid.arrange(gp1,gp2, nrow=1, ncol=2)
+
+TriGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer3))
+TriGram <- tidy(TriGram)
+TriFreq <- aggregate(count~term,TriGram,sum)
+TriFreq <- arrange(TriFreq,desc(count))
+
+gp3 <- ggplot(TriFreq[1:20, ], aes(x = reorder(term, count), y = count,  alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill = "red") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 3-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+TetGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer4))
+TetGram <- tidy(TetGram)
+TetFreq <- aggregate(count~term,TetGram,sum)
+TetFreq <- arrange(TetFreq,desc(count))
+
+gp4 <- ggplot(TetFreq[1:20, ], aes(x = reorder(term, count), y = count, alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill="gray") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 4-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+grid.arrange(gp3,gp4, nrow=1, ncol=2)
+
+metric <- c("total terms","frequency >1","size MB")
+Ngram1 <- c(nrow(UniFreq),nrow(UniFreq[UniFreq$count>1,]),round(object.size(UniFreq)/1000000,0))
+Ngram2 <- c(nrow(BiFreq),nrow(BiFreq[BiFreq$count>1,]),round(object.size(BiFreq)/1000000,0))
+Ngram3 <- c(nrow(TriFreq),nrow(TriFreq[TriFreq$count>1,]),round(object.size(TriFreq)/1000000,0))
+Ngram4 <- c(nrow(TetFreq),nrow(TetFreq[TetFreq$count>1,]),round(object.size(TetFreq)/1000000,0))
+
+cat("Full Ngrams \n")
+Ngram_summary <- data.frame(metric, Ngram1, Ngram2, Ngram3, Ngram4)
+kable(Ngram_summary)
+
+cat(" \n")
+cat(paste("Total number of words - ",sum(UniFreq$count)))
+cat(" \n")
+
+write.csv(UniFreq,"UniFreq.csv", row.names = FALSE)
+write.csv(BiFreq,"BiFreq.csv", row.names = FALSE)
+write.csv(TriFreq,"TriFreq.csv", row.names = FALSE)
+write.csv(TetFreq,"TetFreq.csv", row.names = FALSE)
+```
+
+
+
+### N-gram adjustment 
+
+The size of Ngrams (nearly 300MB+) looks large for our application. How to optimize the Ngrams?
+
+We have 64000 Unigrams (unique words). This is the reasonable word set in terms of language coverage as the average human vocabulary is in the range of 20.000-30.000 words. 
+
+Words are distributed very unequally in terms of use frequency. 50% of word counts relate to top 250 words only. 90% of word counts relate to top 8000 words. 95% of word counts relate to top 20000 words.
+
+The total size of all Ngrams (almost 300MB+) is too large for our application. How to optimize the Ngram size?
+
+One of the optimization approaches is to introduce the dictionary and to limit all Ngrams to words in the dictionary only. I have done this exercise for 30.000-word dictionary. This approach is reducing the size of 2-, 3-, 4-grams by dozens of percents that is not enough. 
+
+Another approach is to to exclude 2-, 3-, 4-grams with count equal to 1 based on the assumption that rare N-grams should not have strong impact on solution performance. This is reducing the Ngram volume to approximately 30MB that looks reasonable. Let’s call these N-grams the **“adjusted” N-grams** in contrast to the **“full” N-grams** - the initial N-grams without any optimization.
+
+It has been decided to use both sets of N-grams (adjusted and full ones) and to compare the results to analyze the impact of size of training data.
+
+```{r prt_07, echo=FALSE}
+## Ngram adjustment
+
+## term lines
+## UniFreq <- read.csv("UniFreq.csv")
+## BiFreq <- read.csv("BiFreq.csv")
+## TriFreq <- read.csv("TriFreq.csv")
+## TetFreq <- read.csv("TetFreq.csv")
+
+UniFreq1 <- UniFreq
+write.csv(UniFreq1,"UniFreq1.csv", row.names = FALSE)
+
+BiFreq1 <- BiFreq[BiFreq$count>1,]
+write.csv(BiFreq1,"BiFreq1.csv", row.names = FALSE)
+
+TriFreq1 <- TriFreq[TriFreq$count>1,]
+write.csv(TriFreq1,"TriFreq1.csv", row.names = FALSE)
+
+TetFreq1 <- TetFreq[TetFreq$count>1,]
+write.csv(TetFreq1,"TetFreq1.csv", row.names = FALSE)
+
+cat("Adjusted Ngrams \n")
+metric <- c("terms","size MB")
+Ngram1 <- c(nrow(UniFreq1),round(object.size(UniFreq1)/1000000,0))
+Ngram2 <- c(nrow(BiFreq1),round(object.size(BiFreq1)/1000000,0))
+Ngram3 <- c(nrow(TriFreq1),round(object.size(TriFreq1)/1000000,0))
+Ngram4 <- c(nrow(TetFreq1),round(object.size(TetFreq1)/1000000,0))
+Ngram_summary <- data.frame(metric, Ngram1, Ngram2, Ngram3, Ngram4)
+kable(Ngram_summary)
+
+```
+
+
+# ANNEX
+
+### Program code
+
+```{r prt_01_, eval=FALSE}
+## reading data files
+set.seed(1234)
+library(backports)
+library(knitr)
+
+setwd("~/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US")
+blogs <- readLines("en_US.blogs.txt")
+news <- readLines("en_US.news.txt")
+twitter <- readLines("en_US.twitter.txt")
+
+```
+
+```{r prt_02_, eval=FALSE}
+## Folders for data
+full_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US_full/" ## Ngrams without adjustments
+adjusted_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US/" ## Ngrams with adjustments
+current_folder <- adjusted_folder
+
+## Data analysis
+
+files <- c("en_US.blogs.txt","en_US.news.txt","en_US.twitter.txt")
+
+## Number of Lines
+lines.blogs <- length(blogs)
+lines.news <- length(news)
+lines.twitter <- length(twitter)
+lines <- c(lines.blogs, lines.news, lines.twitter) 
+
+## Number of Words
+suppressPackageStartupMessages(library(stringi))
+
+words.blogs <- sum(stri_count_words(blogs))
+words.news <- sum(stri_count_words(news))
+words.twitter <- sum(stri_count_words(twitter))
+words <- c(words.blogs, words.news, words.twitter)
+
+## size of files in MB
+size.blogs <- object.size(blogs)/1000000
+size.news <- object.size(news)/1000000
+size.twitter <- object.size(twitter)/1000000
+size_MB <- c(round(size.blogs,0), round(size.news,0), round(size.twitter,0))
+
+files_summary <- data.frame(files, lines, words, size_MB)
+kable(files_summary)
+```
+
+```{r prt_03_, eval=FALSE}
+## Creation of training, validation and testing data sub-sets
+
+Source <- c("blogs","news","twitter")
+
+## divide into training, validation and test parts 60/20/20 without overlap
+blogs.s <- blogs[1:(lines.blogs*.6)]
+blogs.v <- blogs[(lines.blogs*.6+1):(lines.blogs*.8)]
+blogs.t <- blogs[(lines.blogs*.8+1):lines.blogs]
+news.s <- news[1:(lines.news*.6)]
+news.v <- news[(lines.news*.6+1):(lines.news*.8)]
+news.t <- news[(lines.news*.8+1):lines.news]
+twitter.s <- twitter[1:(lines.twitter*.6)]
+twitter.v <- twitter[(lines.twitter*.6+1):(lines.twitter*.8)]
+twitter.t <- twitter[(lines.twitter*.8+1):lines.twitter]
+
+training <- c(length(blogs.s),length(news.s),length(twitter.s))
+validation <- c(length(blogs.v),length(news.v),length(twitter.v))
+testing <- c(length(blogs.t),length(news.t),length(twitter.t))
+
+cat("Number of lines in data sets \n")
+files_summary <- data.frame(Source, training, validation, testing)
+kable(files_summary)
+
+rm(blogs, news, twitter)
+```
+
+```{r prt_04_, eval=FALSE}
+## Taking smaller part (prt %) of data sets for model development and testing
+
+prt <- 0.04 ## percentage of data set to use
+cat(paste("Smaller data sub-sets (",prt*100,"%) for model development and testing \n"))
+
+set.seed(345)
+metric <- c("lines","words")
+
+## training sub-set
+sample.blogs <- sample(blogs.s, length(blogs.s) * prt)
+sample.news <- sample(news.s, length(news.s) * prt)
+sample.twitter <- sample(twitter.s, length(twitter.s) * prt)
+sample.all <- c(sample.blogs, sample.news, sample.twitter)
+writeLines(sample.all,"training_data.txt")
+training <- c(length(sample.all),sum(stri_count_words(sample.all)))
+rm(sample.blogs, sample.news, sample.twitter, blogs.s, news.s, twitter.s)
+
+## validation sub-set
+val.blogs <- sample(blogs.v, length(blogs.v) * prt)
+val.news <- sample(news.v, length(news.v) * prt)
+val.twitter <- sample(twitter.v, length(twitter.v) * prt)
+val.all <- c(val.blogs, val.news, val.twitter)
+writeLines(val.all,"validation_data.txt")
+validation <- c(length(val.all),sum(stri_count_words(val.all)))
+rm(val.blogs, val.news, val.twitter, val.all,blogs.v, news.v, twitter.v)
+
+## testing sub-set
+tst.blogs <- sample(blogs.t, length(blogs.t) * prt)
+tst.news <- sample(news.t, length(news.t) * prt)
+tst.twitter <- sample(twitter.t, length(twitter.t) * prt)
+tst.all <- c(tst.blogs, tst.news, tst.twitter)
+writeLines(tst.all,"testing_data.txt")
+testing <- c(length(tst.all),sum(stri_count_words(tst.all)))
+rm(tst.blogs, tst.news, tst.twitter, tst.all, blogs.t, news.t, twitter.t)
+
+subset_summary <- data.frame(metric, training, validation, testing)
+kable(subset_summary)
+```
+
+```{r prt_05_, eval=FALSE}
+## Cleaning of training sub-set
+
+## temp
+## sample.all <- readLines("training_data.txt")
+
+suppressPackageStartupMessages(library(NLP))
+suppressPackageStartupMessages(library(tm))
+suppressPackageStartupMessages(library(stringi))
+suppressPackageStartupMessages(library(stringr))
+
+corpus <- VCorpus(VectorSource(sample.all))
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, content_transformer(function(x){str_replace_all(x, "[^[\\da-zA-Z - ' ]]"," ")}))
+corpus <- tm_map(corpus, content_transformer(function(x){removePunctuation(x, preserve_intra_word_contractions = TRUE, preserve_intra_word_dashes = TRUE)}))
+corpus <- tm_map(corpus, stripWhitespace)
+
+saveRDS(corpus,file="cleaned_corpus.Rds")
+
+cat(paste("Cleaned corpus training text file:",length(corpus)," lines, ",round(object.size(corpus)/1000000,0)," MB \n\n"))
+
+rm(sample.all)
+```
+
+```{r prt_06_, eval=FALSE}
+## Ngram creation and analysis
+
+## temp lines
+## corpus <- readRDS("cleaned_corpus.Rds")
+
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(gridExtra))
+suppressPackageStartupMessages(library(wordcloud2))
+suppressPackageStartupMessages(library(tidytext))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(tidyr))
+
+## Tokenizing functions (NLP)
+myTokenizer1 <- function(x) {
+  unlist(lapply(ngrams(words(x), 1), paste, collapse = " "), use.names = FALSE)
+}
+myTokenizer2 <- function(x) {
+  unlist(lapply(ngrams(words(x), 2), paste, collapse = " "), use.names = FALSE)
+}
+myTokenizer3 <- function(x) {
+  unlist(lapply(ngrams(words(x), 3), paste, collapse = " "), use.names = FALSE)
+}
+myTokenizer4 <- function(x) {
+  unlist(lapply(ngrams(words(x), 4), paste, collapse = " "), use.names = FALSE)
+}
+
+## unigram creation
+UniGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer1))
+UniGram <- tidy(UniGram) ## to df
+UniFreq <- aggregate(count~term,UniGram,sum)
+UniFreq <- arrange(UniFreq,desc(count))
+
+gp1 <- ggplot(UniFreq[1:20, ], aes(x = reorder(term, count), y = count, alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill="blue") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 1-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+BiGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer2))
+BiGram <- tidy(BiGram)
+BiFreq <- aggregate(count~term,BiGram,sum)
+BiFreq <- arrange(BiFreq,desc(count))
+
+gp2 <- ggplot(BiFreq[1:20, ], aes(x = reorder(term, count), y = count, alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill = "green") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 2-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+grid.arrange(gp1,gp2, nrow=1, ncol=2)
+
+TriGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer3))
+TriGram <- tidy(TriGram)
+TriFreq <- aggregate(count~term,TriGram,sum)
+TriFreq <- arrange(TriFreq,desc(count))
+
+gp3 <- ggplot(TriFreq[1:20, ], aes(x = reorder(term, count), y = count,  alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill = "red") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 3-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+TetGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer4))
+TetGram <- tidy(TetGram)
+TetFreq <- aggregate(count~term,TetGram,sum)
+TetFreq <- arrange(TetFreq,desc(count))
+
+gp4 <- ggplot(TetFreq[1:20, ], aes(x = reorder(term, count), y = count, alpha = 0.1)) +
+    geom_bar(stat = "identity", color = "black", fill="gray") +
+    xlab("") +
+    ylab("Frequency") +
+    ggtitle("Top 20 4-grams") +
+    coord_flip() +
+    guides(fill = "none", alpha = "none") 
+
+grid.arrange(gp3,gp4, nrow=1, ncol=2)
+
+metric <- c("total terms","frequency >1","size MB")
+Ngram1 <- c(nrow(UniFreq),nrow(UniFreq[UniFreq$count>1,]),round(object.size(UniFreq)/1000000,0))
+Ngram2 <- c(nrow(BiFreq),nrow(BiFreq[BiFreq$count>1,]),round(object.size(BiFreq)/1000000,0))
+Ngram3 <- c(nrow(TriFreq),nrow(TriFreq[TriFreq$count>1,]),round(object.size(TriFreq)/1000000,0))
+Ngram4 <- c(nrow(TetFreq),nrow(TetFreq[TetFreq$count>1,]),round(object.size(TetFreq)/1000000,0))
+
+cat(paste("Total number of words - ",sum(UniFreq$count)))
+cat(" \n\n")
+
+cat("Full Ngrams \n")
+Ngram_summary <- data.frame(metric, Ngram1, Ngram2, Ngram3, Ngram4)
+kable(Ngram_summary)
+
+write.csv(UniFreq,"UniFreq.csv", row.names = FALSE)
+write.csv(BiFreq,"BiFreq.csv", row.names = FALSE)
+write.csv(TriFreq,"TriFreq.csv", row.names = FALSE)
+write.csv(TetFreq,"TetFreq.csv", row.names = FALSE)
+```
+
+```{r prt_07_, eval=FALSE}
+## Ngram adjustment
+
+## term lines
+## UniFreq <- read.csv("UniFreq.csv")
+## BiFreq <- read.csv("BiFreq.csv")
+## TriFreq <- read.csv("TriFreq.csv")
+## TetFreq <- read.csv("TetFreq.csv")
+
+UniFreq1 <- UniFreq
+write.csv(UniFreq1,"UniFreq1.csv", row.names = FALSE)
+
+BiFreq1 <- BiFreq[BiFreq$count>1,]
+write.csv(BiFreq1,"BiFreq1.csv", row.names = FALSE)
+
+TriFreq1 <- TriFreq[TriFreq$count>1,]
+write.csv(TriFreq1,"TriFreq1.csv", row.names = FALSE)
+
+TetFreq1 <- TetFreq[TetFreq$count>1,]
+write.csv(TetFreq1,"TetFreq1.csv", row.names = FALSE)
+
+cat("Adjusted Ngrams \n")
+metric <- c("terms","size MB")
+Ngram1 <- c(nrow(UniFreq1),round(object.size(UniFreq1)/1000000,0))
+Ngram2 <- c(nrow(BiFreq1),round(object.size(BiFreq1)/1000000,0))
+Ngram3 <- c(nrow(TriFreq1),round(object.size(TriFreq1)/1000000,0))
+Ngram4 <- c(nrow(TetFreq1),round(object.size(TetFreq1)/1000000,0))
+Ngram_summary <- data.frame(metric, Ngram1, Ngram2, Ngram3, Ngram4)
+kable(Ngram_summary)
+
+```

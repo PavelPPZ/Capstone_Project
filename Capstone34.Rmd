@@ -1,0 +1,1451 @@
+---
+title: "Capstone project (Tasks 3 and 4)"
+author: "Pavel Zakharov"
+date: "2024-04-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE, results='asis' )
+```
+
+# Model Discussion
+
+As it was mentioned above ( [See Parts 1 and 2](https://rpubs.com/pzakharo0/1172855) ) the prediction of the word based on the history (previous text) is a hard task. Human language is very rich, number of options is very high. The thing that is making word prediction more realistic is that all we are using only the small sub-set of language and that there are the limitations of the context.
+
+English language has 170.000 words but average vocabulary of the person is about 20.000 - 30.000 words only. As  it was mentioned above 50% of word count in our text relates to top 250 (!) words only, 90% of word count relates to top 8.000 words. There are standard phrases, cliche ... All this gives us a hope that word prediction can work.
+
+### Method
+
+The basic idea of the prediction method is to look on previous text (history) and to identify the most probable next word
+
+*The dog is lowdly ... - most probably: barking*
+
+In Ngram approach this is the purely statistical prediction: we look at the history (analyze last N-1 words) and suggest the next word with the highest probability based on training data set.
+
+### N-gram model
+
+N-gram is a sequence of N words in specific order. 
+
+N-grams are extracted from the cleaned text to reflect the most important correlations. Text cleaning can be done in different ways. Usually it is moving text to lowercase, removing numbers, removing punctuation and special symbols etc. 
+
+After cleaning we can extract from the text the set of unigrams (unique words) with counts,  bigrams (pairs of words), trigrams (3 words in specific order) etc. 
+
+Intuition says us that the higher the N the better the prediction. On other side the higher the N the larger the N-gram size. In addition as mentioned  above the number of unique Ngrams tends to stabilize with growth of N. All that sets natural limit for the maximum N level to select.
+
+An N-gram model predicts the last word w~N~ of an N-gram from previous N−1 word sequence w^i−1^~i−(N−1)~:w~i−(N−1)~,…,w~i−1~, by calculating the **probability** of P(w~i~|w~i−(N−1)~,…,w~i−1~). 
+
+It is obvious that N-gram approach is limited by “key-hole” view on the text based on sequence of N words only. It is not considering wider context at all.
+
+### Probability calculation 
+
+In the ideal world we could compute probabilities of the sequences of n words P( w~1~, w~2~, ..., w~n~ ) by decomposing this probability using the **chain rule of probability**:
+
+P( X~1~...X~n~ ) = P( X~1~ )P( X~2~ | X~1~ )P( X~3~ | X~1:2~ ) . . . P( X~n~ | X~1:n−1~ )
+
+But there is no way to compute the exact probability of a word given a long sequence of preceding words. The approach of the n-gram model is that instead of computing the probability of a word given its entire history, we can approximate the history by just the last few words. 
+
+This approach is called **Markov assumption**. We assume that we can approximate the probability of a word as follows:
+
+P( w~n~ | w~1:n−1~ ) ≈ P( w~n~ | w~n−N+1:n−1~ ) 
+
+Probability can be calculated as:
+
+P( w~n~ | w~n−1~) = C( w~n−1~w~n~) / ∑~w~ C(wn−1w),   
+
+where C(xxx yyy) is the count of the word combination “xxx yyy” appearing in the training data.
+
+For example, suppose we want to predict the next word of *dog is lowdly*, than we can calculate the probability of:
+
+P( barking | dog is lowdly ) = C( dog is lowdly barking ) / C( dog is lowdly ), 
+
+and then to compare with probabilities of other word sequence, e.g. P( screaming | dog is lowdly ), P( howling | dog is lowdly ). 
+
+This probabilities estimation is called **Maxmimum Likelihood Estimation** or **MLE**. 
+
+### Data sparsity and smoothing
+
+The major problem with using MLE for training N-gram model is that it cannot handle N-grams that are not represented in the training corpus. This kind of missing N-grams always appear due to limitations of training text. 
+
+The process to mitigate the missing N-grams is called **smoothing** or **discounting**. There are many different methods (models) to smooth the probability distributions with missing N-grams by assigning some non-zero probabilities to these unseen N-grams. 
+
+Some models are pretty complex and allow a lot of tuning to optimize results, some are very simple and have no tuning freedom. All such models have their pros and cons. In the current paper we will focus on back-off and interpolation models that will be discussed below in more details.
+
+### Accuracy assessment
+
+The best way to evaluate the performance of a language model is to embed it in
+an application and measure the performance of the application. Such end-to-end "real life"
+evaluation is called **extrinsic** evaluation. Unfortunately, running  end-to-end evaluation is often very time and resource consuming.
+
+It’s helpful to have a metric that can be used to quickly evaluate potential
+improvements in a language model. An **intrinsic** evaluation metric is one that measures the quality of a model independent of any application. The most frequently used intrinsic metric for measuring language model performance is **perplexity**.
+
+The **perplexity** of a language model on a test set is the inverse probability of the test set, normalized (by geometric average) by the number of words N. For this reason it’s sometimes called the **per-word perplexity**. The lower the perplexity the better is the quality of language model.
+
+For a test set W = w~1~w~2~ . . . w~N~ : 
+
+Perplexity( W ) = P( w~1~w~2~ . . . w~N~ )^−1/N^
+
+We can use the chain rule and Markov assumption to calculate the probability of W. The average (geometric) perplexity for prediction of i-th word based on (i-1) word history for N word combinations is calculated as
+
+Perplexity( W ) = (∏~i=1~^N^ 1 / P( w~i~ | w~1~ . . . w~i−1~ ) )^1/N^
+
+Perplexity can be thought of as the weighted average branching factor of a language. In the case of bigram prediction perplexity is the (geometric) average number of possible variants ("branches") for given history.
+
+Perplexity is a function of both the text and the language mode. An (intrinsic) improvement in perplexity does not guarantee an (extrinsic) improvement in the performance of a language processing task. Nonetheless, because perplexity usually correlates with task improvements, it is commonly used as a convenient evaluation metric. 
+
+```{r prt_01, echo=FALSE}
+## Preparation of combined ngrams - adjusted and non-adjusted, enriched with probability
+
+## Folders
+full_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US_full/"
+adjusted_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US/"
+current_folder <- adjusted_folder
+
+```
+
+```{r prt_02, echo=FALSE, eval=FALSE}
+
+## merging ngram tables, converting them to prediction format
+## calculation of probability of last word for given set of previous words
+
+library(tidyr)
+
+prep_nfreq <- function(){
+        ## N-freq files preparation for adjusted and full Ngrams
+        ## reading Ngram files, keeping last 2 columns, adding "unk" to UniFreq
+        ## saving into separate folders
+        
+        
+        ## Adjusted Ngrams
+        ## Reading adjusted Ngrams
+        UniFreq1 <- read.csv("UniFreq1.csv")
+        gcol <- ncol(UniFreq1)
+        UniFreq1 <- UniFreq1[,(gcol-1):gcol]
+        BiFreq1 <- read.csv("BiFreq1.csv")
+        BiFreq1 <- BiFreq1[,(gcol-1):gcol]
+        TriFreq1 <- read.csv("TriFreq1.csv")
+        TriFreq1 <- TriFreq1[,(gcol-1):gcol]
+        TetFreq1 <- read.csv("TetFreq1.csv")
+        TetFreq1 <- TetFreq1[,(gcol-1):gcol]
+
+        ## add "unk" to unigram for missing words
+        UniFreq1[nrow(UniFreq1)+1,] <- c("unk",1)
+
+        UniFreq1$count <- as.numeric(UniFreq1$count)
+        BiFreq1$count <- as.numeric(BiFreq1$count)
+        TriFreq1$count <- as.numeric(TriFreq1$count)
+        TetFreq1$count <- as.numeric(TetFreq1$count)
+
+        ## save the files to current / adjusted folder
+        write.csv(UniFreq1,"UniFreq1.csv", row.names = FALSE)
+        write.csv(BiFreq1,"BiFreq1.csv", row.names = FALSE)
+        write.csv(TriFreq1,"TriFreq1.csv", row.names = FALSE)
+        write.csv(TetFreq1,"TetFreq1.csv", row.names = FALSE)
+        
+        ## Full Ngrams
+        ## Reading full Ngrams
+        UniFreq1 <- read.csv("UniFreq.csv")
+        gcol <- ncol(UniFreq1)
+        UniFreq1 <- UniFreq1[,(gcol-1):gcol]
+        BiFreq1 <- read.csv("BiFreq.csv")
+        BiFreq1 <- BiFreq1[,(gcol-1):gcol]
+        TriFreq1 <- read.csv("TriFreq.csv")
+        TriFreq1 <- TriFreq1[,(gcol-1):gcol]
+        TetFreq1 <- read.csv("TetFreq.csv")
+        TetFreq1 <- TetFreq1[,(gcol-1):gcol]
+
+        ## add "unk" to unigram for missing words
+        UniFreq1[nrow(UniFreq1)+1,] <- c("unk",1)
+
+        UniFreq1$count <- as.numeric(UniFreq1$count)
+        BiFreq1$count <- as.numeric(BiFreq1$count)
+        TriFreq1$count <- as.numeric(TriFreq1$count)
+        TetFreq1$count <- as.numeric(TetFreq1$count)
+
+        ## save the files to "full" folder
+        write.csv(UniFreq1,paste(full_folder,"UniFreq1.csv",sep = ""), row.names = FALSE)
+        write.csv(BiFreq1,paste(full_folder,"BiFreq1.csv",sep = ""), row.names = FALSE)
+        write.csv(TriFreq1,paste(full_folder,"TriFreq1.csv",sep = ""), row.names = FALSE)
+        write.csv(TetFreq1,paste(full_folder,"TetFreq1.csv",sep = ""), row.names = FALSE)
+
+}
+
+aggr_ngram(x,full){
+        ## aggregating ngrams into one file for convenience of analysis and modelling
+        ## splitting term column into input(history) and word(last word)
+        ## adding probability column
+        ## "x" - string, the folder to read and write the files
+        ## "full" - logical: whether Ngram is full (TRUE) or adjusted (FALSE)
+
+        ## read Ngrams1's
+        UniFreq1 <- read.csv(paste(x,"UniFreq1.csv",sep=""))
+        BiFreq1 <- read.csv(paste(x,"BiFreq1.csv",sep=""))
+        TriFreq1 <- read.csv(paste(x,"TriFreq1.csv",sep=""))
+        TetFreq1 <- read.csv(paste(x,"TetFreq1.csv",sep=""))
+
+        ## creation of total Ngram with probabilities
+
+        ## N=1
+        input <- rep("", nrow(UniFreq1)) ## adding formal input column
+        ngrm1 <- data.frame(input)
+        ngrm1$word <- UniFreq1$term
+        ngrm1$count <- UniFreq1$count
+        sum1 <- sum(ngrm1$count)
+        ngrm1$probability <- UniFreq1$count / sum1
+        ngrm1$n <- rep(1,nrow(UniFreq1)) ## adding column with n level
+        write.csv(ngrm1,paste(x,"ngrm1.csv",sep=""), row.names = FALSE)
+
+        ## N=2
+        ngrm2 <- BiFreq1
+        ngrm2$count <- as.numeric(ngrm2$count)
+        ngrm2 <- separate(ngrm2,"term",c("input","word"),sep=" ")
+        ngrm2$probability <- rep(1., nrow(BiFreq1))
+        ## for 2-gram I can not use 1-gram as "input" count as 
+        ## in 1-gram 1-2 letter words are excluded
+        for (i in 1:nrow(ngrm2)){
+        
+                sum_input <- sum(ngrm2[ngrm2$input==ngrm2$input[i],3])
+                ngrm2$probability[i] <- ngrm2$count[i] / sum_input
+                
+                ## count to monitor progress
+                ## i000 <- round(i/100)
+                ## if (i000*100 == i)print(i) 
+        }
+        ngrm2$n <- rep(2, nrow(BiFreq1))
+        write.csv(ngrm2,paste(x,"ngrm2.csv",sep=""), row.names = FALSE)
+
+        ## N=3
+        ngrm3 <- TriFreq1
+        ngrm3$count <- as.numeric(ngrm3$count)
+        ngrm3 <- separate(ngrm3,"term",c("input1","input2","word"),sep=" ")
+        ngrm3 <- unite(ngrm3,"input","input1","input2",sep=" ")
+        ngrm3$probability <- rep(1., nrow(TriFreq1))
+        for (i in 1:nrow(ngrm3)){
+                
+                sum_input <- if (full) {BiFreq1[BiFreq1$term==ngrm3$input[i],2]} 
+                        else {sum(ngrm3[ngrm3$input==ngrm3$input[i],3])}
+                ngrm3$probability[i] <- ngrm3$count[i] / sum_input
+        
+                ## i000 <- round(i/1000)
+                ## if (i000*1000 == i)print(i) 
+        }
+        ngrm3$n <- rep(3, nrow(TriFreq1))
+        write.csv(ngrm3,paste(x,"ngrm3.csv",sep=""), row.names = FALSE)
+
+        ## N=4
+        ngrm4 <- TetFreq1
+        ngrm4$count <- as.numeric(ngrm4$count)
+        ngrm4 <- separate(ngrm4,"term",c("input1","input2","input3","word"),sep=" ")
+        ngrm4 <- unite(ngrm4,"input","input1","input2","input3", sep=" ")
+        ngrm4$probability <- rep(1., nrow(TetFreq1))
+        for (i in 1:nrow(ngrm4)){
+                
+                sum_input <- if (full) {TriFreq1[TriFreq1$term==ngrm4$input[i],2]} 
+                        else {sum(ngrm4[ngrm4$input==ngrm4$input[i],3])}
+                
+                ngrm4$probability[i] <- ngrm4$count[i] / sum_input
+                
+                ## i000 <- round(i/1000)
+                ## if (i000*1000 == i)print(i) 
+        }
+        ngrm4$n <- rep(4, nrow(TetFreq1))
+        write.csv(ngrm4,paste(x,"ngrm4.csv",sep=""), row.names = FALSE)
+        
+        ## aggregated ngrm
+        ngrm <- rbind(ngrm1,ngrm2,ngrm3,ngrm4)
+        write.csv(ngrm,paste(x,"ngrm.csv",sep=""),row.names = FALSE)
+        
+        ## aggregated nfreq with pasted input and word columns - for perplexity
+        nfreq <- unite(ngrm,"term","input","word",sep=" ")
+        write.csv(nfreq,paste(x,"nfreq.csv",sep=""),row.names = FALSE)
+
+        rm(UniFreq1, BiFreq1, TriFreq1, TetFreq1)
+
+}
+
+## creation of aggregated files for full and adjusted Ngrams
+prep_nfreq() 
+aggr_ngram(full_folder,TRUE)
+aggr_ngram(adjusted_folder,FALSE)
+
+```
+
+It is obvious that perplexity for N-gram is decreasing with the growth of N. It is demonstrated below for perplexity for N-grams applied to training data (no sparsity) for non-adjusted (full) and adjusted (count>1) Ngrams. As we see for N=4 perplexity is only 1.6 for non-adjusted and 2 for adjusted Ngrams.
+
+The problem is that number of missing N-grams (sparsity) on the real (testing) data is drastically increasing with the growth of N. 
+
+Prediction models are trying to optimize the outcome of these conflicting processes.
+
+```{r prt03, echo=FALSE}
+## perplexity for training data
+
+perp_ngrm <- function(x){
+        ## calculates perplexities for given "x" (=ngrm) for N = 1, 2, 3, 4 
+        N_1 <- c(round(exp(sum( -log(x[x$n==1,4]) * x[x$n==1,3] ) / sum(x[x$n==1,3])),0)) 
+        N_2 <- c(round(exp(sum( -log(x[x$n==2,4]) * x[x$n==2,3] ) / sum(x[x$n==2,3])),0))
+        N_3 <- c(round(exp(sum( -log(x[x$n==3,4]) * x[x$n==3,3] ) / sum(x[x$n==3,3])),0)) 
+        N_4 <- c(round(exp(sum( -log(x[x$n==4,4]) * x[x$n==4,3] ) / sum(x[x$n==4,3])),1))
+
+        metric <- c("Perplexity")
+        summary_perp1 <- data.frame(metric,N_1,N_2,N_3,N_4)
+        
+        summary_perp1
+}
+
+library(knitr)
+
+ngrm <- read.csv("C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US_full/ngrm.csv")
+summary_perp2 <- perp_ngrm(ngrm)
+cat("Non-adjusted (full) Ngrams \n")
+kable(summary_perp2)
+
+ngrm <- read.csv("C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US/ngrm.csv")
+summary_perp2 <- perp_ngrm(ngrm)
+cat("Adjusted Ngrams \n")
+kable(summary_perp2)
+rm(ngrm)
+```
+
+This is the lower estimation of perplexity. Perplexity on real (testing) text will be much higher due to missing Ngrams at high levels of N. As presented below perplexity for selected models on validation data set is measured in hundreds or thousands. This is the price of high sparsity of training Ngrams.
+
+### Back-off and interpolation models
+
+Back-off and interpolation models are one of the simplest and the most "natural" models that address missing N-grams (sparsity) by using N-grams of lower levels.
+
+In the interpolation model you are using the following expression to calculate probability (example for 4-gram)
+
+P~int~( w~4~ | w~3~w~2~w~1~ ) ≈ λ~1~P( w~4~ )+λ~2~P( w~4~|  w~3~ )+λ~3~P( w~4~ |w~3~w~2~)+λ~4~P(w~4~|w~3~w~2~w~1~), where λ~1~+λ~2~+λ~3~+λ~4~=1
+
+If some N-gram is missing it is "covered" by lower level N-grams. λ's are selected based on perplexity minimization on validation data set. The prediction of the word is done based on probability maximization for given history. You are selecting the word with the highest probability based on formula above.
+
+The algorithm of simple back-off model is very straightforward. You are looking for N-grams that have required history and select the word with the highest probability. If the N-gram with the required history is missing at level N you are moving to level N-1. If it is missing again, you move to N-2 and so on. With every step you are making the history shorter and increase the probability to find N-gram with the required history. In some respect back-off model is the modification of approximation model with context dependent λ’s.
+
+At the first glance it seems that interpolation model has more “degrees of freedom” that should give it some advantage. In reality backoff model has more internal “degrees of freedom” as it automatically adjusts itself to every given set of words. 
+
+# Model assessment
+
+### Model assessment process
+
+Before going into development of prediction application let's assess the quality of the models. As mentioned above we will be using the intrinsic approach based on perplexity minimization.
+
+The key steps: 
+
+1) Take the subset of validation data. Clean the data. Create tetragrams for validation data. Take randomly the sub-set of validation tetragrams for model assessment. (We are using the set of 10000 validation tetragrams).
+
+2) Calculate perplexity for validation tetragrams for backoff model based on N-grams created on training data.
+
+3) Find the λ's that minimize perplexity for validation tetragrams for interpolation model based on N-grams created on training data. λ's are defined based on Monte-Carlo model with 1000 trials that should be enough for 3 degrees of freedom.
+
+4) Compare perplexities for backoff and interpolation models. Make decision on the best model (lowest perplexity)
+
+5) Repeat steps 1-4 for adjusted and non-adjusted Ngrams to assess the impact of Ngram optimization.
+
+### Preparation of validation data set
+
+We are taking 10% of the initial validation data set we prepared. We clean the data and calculate the tetragrams for this cleaned validation text. 
+
+```{r prt04, echo=FALSE, eval=FALSE}
+## preparation of validation and testing tetragrams
+
+tetra_prep <- function(x,y=1){
+        ## preparation of validation and testing tetragrams
+        ## x = "validation" or "testing". y = part of sample to take
+        
+        if(!(x %in% c("validation","testing"))) return(NA)
+        
+        sample.all <- readLines(paste(x,"_data.txt",sep=""))
+        sample.all <- sample.all[1:(length(sample.all)*y)]
+        
+        ## Cleaning of data sub-set
+
+        suppressPackageStartupMessages(library(NLP))
+        suppressPackageStartupMessages(library(tm))
+        suppressPackageStartupMessages(library(stringi))
+        suppressPackageStartupMessages(library(stringr))
+
+        corpus <- VCorpus(VectorSource(sample.all))
+        corpus <- tm_map(corpus, content_transformer(tolower))
+        corpus <- tm_map(corpus, removeNumbers)
+        corpus <- tm_map(corpus, content_transformer(function(x){str_replace_all(x, "[^[\\da-zA-Z - ' ]]"," ")}))
+        corpus <- tm_map(corpus, content_transformer(function(x){removePunctuation(x, preserve_intra_word_contractions = TRUE, preserve_intra_word_dashes = TRUE)}))
+        corpus <- tm_map(corpus, stripWhitespace)
+
+        saveRDS(corpus,file=paste("cleaned_",x,"_corpus.Rds",sep=""))
+
+        cat(paste("Cleaned corpus",x,"text file:",length(corpus)," lines, ",round(object.size(corpus)/1000000,0)," MB \n\n"))
+
+        rm(sample.all)
+        
+        ## Tetragram creation and analysis
+
+        suppressPackageStartupMessages(library(ggplot2))
+        suppressPackageStartupMessages(library(gridExtra))
+        suppressPackageStartupMessages(library(wordcloud2))
+        suppressPackageStartupMessages(library(tidytext))
+        suppressPackageStartupMessages(library(dplyr))
+        suppressPackageStartupMessages(library(tidyr))
+
+        ## Tokenizing function (NLP)
+        myTokenizer4 <- function(x) {
+                unlist(lapply(ngrams(words(x), 4), paste, collapse = " "), use.names = FALSE)
+        }
+        
+        TetGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer4))
+        TetGram <- tidy(TetGram)
+        TetFreq <- aggregate(count~term,TetGram,sum)
+        TetFreq <- arrange(TetFreq,desc(count))
+        
+        rm(corpus)
+        
+        TetFreq
+
+}
+```
+
+```{r prt05, echo=FALSE, eval=FALSE}
+## creation of validation tetragram
+
+library(knitr)
+        
+val <- tetra_prep("validation", 0.1) ## taking 10% of validation data set
+
+metric <- c("total terms","frequency >1","size MB")
+
+Ngram4 <- c(nrow(val),nrow(val[val$count>1,]),round(object.size(val)/1000000,0))
+        
+Ngram_summary <- data.frame(metric, Ngram4)
+write.csv(Ngram_summary,"validation summary",row.names = FALSE)
+        
+cat(paste("validation","tetragram summary \n"))
+        
+kable(Ngram_summary, align='l')
+
+write.csv(val,"validation_4gram.csv", row.names=FALSE)
+
+```
+
+```{r echo=FALSE}
+Ngram_summary <- read.csv("validation summary")
+        
+cat(paste("validation","tetragram summary \n"))
+        
+kable(Ngram_summary, align='l')
+```
+
+As we see the validation data has high sparsity as well, less than 1% of tetragrams have count>1.
+
+After this we are select randomly 10000 tetragrams. These 10000 tetragrams will be used for validation purposes. 
+
+```{r prt06, echo=FALSE, eval=FALSE}
+
+val <- read.csv("validation_4gram.csv")
+
+library(dplyr)
+nlines <- 10000
+set.seed(7654)
+
+val1 <- slice_sample(val,n=nlines) ## randomly selected "nlines" from val
+write.csv(val1,"selected_validation_4gram.csv",row.names = FALSE)
+
+```
+
+### Preparation to model assessment
+
+Model assessment is very time-consuming exercise. To make model assessment (and later the execution) more convenient and fast we are aggregating Ngrams with different N into one file, add information on probability, split Ngram terms into elements.
+
+We are creating 2 versions of aggregated files - one for perplexity assessment (nfreq), another for modelling (ngrm). The process of aggregation is very time consuming but it allows to save a lot of time in assessment and modelling phases.
+
+We are calculating as well the probability and count matrixes - for each term of validation tetragram data set we calculate the probabilities and counts for each level of N (1, 2, 3, 4) based on our Ngrams created on testing data (full and adjusted).
+
+This phase is very calculation “heavy” but it allows to make more assessments, dig into details. I’m saving results of preparatory work to disk for later usage.
+
+```{r prt07, echo=FALSE, eval=FALSE}
+
+prob_vector <- function(x, pm){
+        ## calculation of probabilities for given 4-gram "x" based on testing Ngrams
+        ## "pm" - probability assigned to missing words
+        ## uses aggregated nfreq based on testing data with probabilities
+        ## appr 1000 lines of validation set / minute
+        
+        library(stringr)
+        
+        words <- str_split_1(x, " ") ## split x to vector of words
+        
+        prob <- c(0.,0.,0.,0.) ## vector of probabilities
+        
+        p4 <- nfreq[nfreq$n==4 & nfreq$term==paste(words[1:4],collapse=" "),3]
+        prob[4] <- if(identical(p4,numeric(0))){0} else {p4}
+        p3 <- nfreq[nfreq$n==3 & nfreq$term==paste(words[2:4],collapse=" "),3]
+        prob[3] <- if(identical(p3,numeric(0))){0} else {p3}
+        p2 <- nfreq[nfreq$n==2 & nfreq$term==paste(words[3:4],collapse=" "),3]
+        prob[2] <- if(identical(p2,numeric(0))){0} else {p2}
+        p1 <- nfreq[nfreq$n==1 & nfreq$term==words[4],3]
+        prob[1] <- if(identical(p1,numeric(0))){pm} else {p1}
+        
+        prob
+        
+}
+
+val1 <- read.csv("selected_validation_4gram.csv")
+
+## calculation of probability matrix (df) for adjusted Ngrams
+nfreq <- read.csv("nfreq.csv")
+
+pmiss <- nfreq[nfreq$n==1 & nfreq$term == "unk",3] ## min probability assigned to missing words
+
+for (i in 1:nrow(val1)){
+        prob <- prob_vector(val1$term[i], pmiss)
+        prob <- as.data.frame(t(prob))
+        
+        ## i000 <- round(i/100)
+        ## if (i000*100 == i)print(i)
+        
+        prob_df <- if(i==1){prob} else {rbind(prob_df,prob)}
+        
+}
+write.csv(prob_df,"prob_df.csv")
+
+## calculation of probability matrix (df) for full Ngrams
+nfreq <- read.csv(paste(full_folder,"nfreq.csv",sep=""))
+
+pmiss <- nfreq[nfreq$n==1 & nfreq$term == "unk",3] ## min probability assigned to missing words
+
+for (i in 1:nrow(val1)){
+        prob <- prob_vector(val1$term[i], pmiss)
+        prob <- as.data.frame(t(prob))
+        
+        ## i000 <- round(i/100)
+        ## if (i000*100 == i)print(i)
+        
+        prob_df <- if(i==1){prob} else {rbind(prob_df,prob)}
+        
+}
+write.csv(prob_df,paste(full_folder,"prob_df.csv",sep=""))
+
+count_vector <- function(x){
+        ## calculation of counts for history of given 4-gram "x" based on testing Ngrams
+        ## uses aggregated ngrm based on testing data with probabilities
+        ## appr 3000 lines of validation set / minute
+        
+        words <- str_split_1(x, " ") ## split x to vector of words
+        
+        cnt <- c(0.,0.,0.,0.) ## vector of counts for given history
+        
+        c4 <- sum(ngrm[ngrm$n==4 & ngrm$input==paste(words[1:3],collapse=" "),3])
+        cnt[4] <- if(identical(c4,numeric(0))){0} else {c4}
+        c3 <- sum(ngrm[ngrm$n==3 & ngrm$input==paste(words[2:3],collapse=" "),3])
+        cnt[3] <- if(identical(c3,numeric(0))){0} else {c3}
+        c2 <- sum(ngrm[ngrm$n==2 & ngrm$input==words[3],3])
+        cnt[2] <- if(identical(c2,numeric(0))){0} else {c2}
+        c1 <- sum(ngrm[ngrm$n==1,3])
+        cnt[1] <- if(identical(c1,numeric(0))){1} else {c1} ## min count for unk
+        
+        cnt
+        
+}
+
+## creation of count df for validation 4grams
+library(stringr)
+
+## For adjusted Ngrams
+ngrm <- read.csv("ngrm.csv")
+
+for (i in 1:nrow(val1)){
+        cnt <- count_vector(val1$term[i])
+        cnt <- as.data.frame(t(cnt))
+        
+        i000 <- round(i/100)
+        if (i000*100 == i)print(i)
+        
+        count_df <- if(i==1){cnt} else {rbind(count_df,cnt)}
+        
+}
+write.csv(count_df,"count_df.csv", row.names = FALSE)
+
+## For full Ngrams
+ngrm <- read.csv(paste(full_folder,"ngrm.csv",sep=""))
+
+for (i in 1:nrow(val1)){
+        cnt <- count_vector(val1$term[i])
+        cnt <- as.data.frame(t(cnt))
+        
+        i000 <- round(i/100)
+        if (i000*100 == i)print(i)
+        
+        count_df <- if(i==1){cnt} else {rbind(count_df,cnt)}
+        
+}
+write.csv(count_df,paste(full_folder,"count_df.csv",sep=""), row.names = FALSE)
+
+```
+
+### Intrinsic assessment of models
+
+All these preparations allow us to accelerate and simplify the assessment and comparison of models. As discussed earlier we are doing intrinsic assessment based on perplexity minimization.
+
+**Backoff model**
+
+Calculation of perplexity for backoff model required re-normalization of probabilities calculated for specific Ngram as model is acting across different levels of Ngrams. This re-normalization has been done, though it’s impact on perplexity is not substantial both for adjusted and full Ngrams. This is explained by high sparsity of higher level Ngrams.
+
+```{r prt08, echo=FALSE, fig.width=4, fig.height=4}
+perp_backoff <- function(x,y){
+        
+        ## '-log' of probability with normalization and N level calculation 
+        ## for backoff model
+        ## input "x" - probability matrix, "y" - count matrix
+        
+        perplexity <- c()
+        ng <- c() ## N grams used
+        
+        for (i in 1:nrow(x) ){
+                np <- 1
+                if (x[i,2]!=0) np <- 2
+                if (x[i,3]!=0) np <- 3
+                if (x[i,4]!=0) np <- 4
+                ## prp <- 1 / x[i,np]
+                prob <- y[i,np] * x[i,np] / sum(y[i,np:4]) ## normalized probability
+                prp <- -log(prob) * val1$count[i] ## -ln(P)
+                perplexity <- c(perplexity,prp)
+                ng <- c(ng,np)
+        }
+        
+        result <- data.frame(perplexity,ng)
+        
+        as.data.frame(result)
+        
+}
+
+val1 <- read.csv("selected_validation_4gram.csv")
+
+## Adjusted Ngrams
+prob_df <- read.csv("prob_df.csv")
+count_df <- read.csv("count_df.csv")
+
+backoff <- perp_backoff(prob_df, count_df)
+
+perp_b <- exp(sum(backoff$perplexity) / sum(val1$count))
+
+cat(paste("Perplexity: backoff model, adjusted Ngrams - ", round(perp_b, 0)))
+cat("\n"); cat("\n")
+
+## creation of vector for N levels used
+ng_b <- c()
+for (i in 1:nrow(val1)){
+        ng_b <- c(ng_b,rep(backoff$ng[i],val1$count[i]))
+}
+cat("Backoff model: Ngram distribution, adjusted Ngrams \n")
+cat("\n"); cat("\n")
+hist(ng_b, breaks = c(0.5,1.5,2.5,3.5,4.5), xlab = "Level of Ngram used", main = "Back-off model")
+
+## Full Ngrams
+prob_df <- read.csv(paste(full_folder,"prob_df.csv",sep=""))
+count_df <- read.csv(paste(full_folder,"count_df.csv",sep=""))
+
+backoff <- perp_backoff(prob_df, count_df)
+
+perp_b <- exp(sum(backoff$perplexity) / sum(val1$count))
+cat("\n\n")
+cat(paste("Perplexity: backoff model, full Ngrams - ", round(perp_b, 0)))
+cat("\n"); cat("\n")
+
+## creation of vector for N levels used
+ng_b <- c()
+for (i in 1:nrow(val1)){
+        ng_b <- c(ng_b,rep(backoff$ng[i],val1$count[i]))
+}
+cat("Backoff model: Ngram distribution, full Ngrams \n")
+cat("\n"); cat("\n")
+hist(ng_b, breaks = c(0.5,1.5,2.5,3.5,4.5), xlab = "Level of Ngram used", main = "Back-off model")
+
+```
+
+As we see for adjusted Ngrams the perplexity is 16% higher compared to full Ngrams. The impact on Ngram size is not dramatic. Perplexity for validation data set is 200 times higher compared to training data set.
+
+The usage of Trigrams and Tetragrams for adjusted Ngrams is lower compared to full Ngrams. This is the result of higher sparsity of adjusted Ngrams.
+
+**Interpolation model**
+
+Calculation for interpolation model is more complicated. 
+
+We need to find the set of λ's that minimize perplexity for validation set. λ's are identified using the Monte-Carlo method with 1000 random points that takes substantial time. We have 3 degrees of freedom for λ's, so 1000 tries should be enough.
+
+```{r prt09, echo=FALSE, eval=FALSE}
+## interpolation model
+
+perp_inter <- function(x, y){
+        
+        ## calculates '-log' of probability for interpolation model
+        ## input - "x" probability df, "y" - lambda vector
+        ## output - -log of probability vector for given probability df
+        
+        perplexity <- c()
+        
+        for (i in 1:nrow(x) ){
+                prp <- -log(y[1]*x[i,1]+y[2]*x[i,2]+y[3]*x[i,3]+y[4]*x[i,4])*val1$count[i]
+                perplexity <- c(perplexity,prp)
+        }
+        
+        result <- perplexity
+        
+        result
+        
+}
+
+## Adjusted Ngrams
+prob_df <- read.csv("prob_df.csv")
+
+lambda <- c(0.25,0.25,0.25,0.25)
+
+niter <- 1000 ## number of iterations
+perp_min <- 100000000
+set.seed(8765)
+
+for (ii in 1:niter){
+        ## monte carlo search of lambda that minimize perplexity
+        lmb <- runif(4)
+        lmb <- lmb / sum(lmb) ## normalised lambdas
+        
+        interpolation <- perp_inter(prob_df,lmb)
+        
+        if (exp(sum(interpolation) / sum(val1$count)) < perp_min){
+                perp_min <- exp(sum(interpolation) / sum(val1$count))
+                lambda <- lmb
+        }
+        
+        i000 <- round(ii/10)
+        if (i000*10 == ii)print(ii)
+                
+}
+
+cat("\n")
+cat("Interpolation model, adjusted Ngrams \n")
+
+barplot(lambda, names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model")
+
+cat(paste("Perplexity - ",round(perp_min,0)))
+cat("\n")
+
+## Full Ngrams
+prob_df <- read.csv(paste(full_folder,"prob_df.csv",sep=""))
+
+lambda <- c(0.25,0.25,0.25,0.25)
+
+niter <- 1000 ## number of iterations
+perp_min <- 100000000
+set.seed(8765)
+
+for (ii in 1:niter){
+        ## monte carlo search of lambda that minimize perplexity
+        lmb <- runif(4)
+        lmb <- lmb / sum(lmb) ## normalised lambdas
+        
+        interpolation <- perp_inter(prob_df,lmb)
+        
+        if (exp(sum(interpolation) / sum(val1$count)) < perp_min){
+                perp_min <- exp(sum(interpolation) / sum(val1$count))
+                lambda <- lmb
+        }
+        
+        ## i000 <- round(ii/10)
+        ## if (i000*10 == ii)print(ii)
+                
+}
+
+cat("\n")
+cat("Interpolation model, adjusted Ngrams \n")
+
+barplot(lambda, names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model")
+
+cat(paste("Perplexity - ",round(perp_min,0)))
+cat("\n")
+
+
+```
+
+```{r prt10, echo=FALSE, results='asis', fig.width=4, fig.height=4}
+## Adjusted Ngrams
+cat(" \n")
+cat(paste("\n Perplexity: interpolation model, adjusted Ngrams -", round(read.csv("int_perp.csv"),0)))
+cat("\n"); cat("\n")
+barplot(read.csv("lambda.csv")[,1], names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model - adjusted")
+cat(" \n")
+
+##Full Ngrams
+cat(" \n")
+cat(paste("\n Perplexity: interpolation model, full Ngrams -", round(read.csv(paste(full_folder,"int_perp.csv",sep="")),0)))
+cat(" \n")
+cat(" \n")
+barplot(read.csv(paste(full_folder,"lambda.csv",sep=""))[,1], names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model - full")
+cat("\n\n")
+
+```
+
+We see that perplexity for interpolation model is much higher (by 2.5 times) compared to backoff model both for adjusted and full training Ngrams.
+
+Distribution of λ’s across N is similar to backoff model (mostly N=1,2 + some N=3 for full Ngrams) but with substantially higher usage of UniGrams and Bigrams. 
+
+### Decision on the choice of model
+
+Backoff model is demonstrating higher perplexity compared to interpolation model. In addition, it is much simpler in calculation process. Interpolation model has no clear benefits.
+
+So based on these results of the intrinsic assessment we select **backoff model** for implementation in the application.
+
+### Extrinsic assessment of backoff model
+
+We have selected backoff model based on intrinsic assessment (perplexity minimization). It is interesting to investigate how the size of training Ngrams used by the model affects the performance.
+
+Backoff model is simple in calculation that allows us to make extrinsic (“real-life”) assessment of the accuracy of prediction.
+
+For this assessment we have taken the validation data set of tetragrams and applied to it the prediction algorithm based on adjusted and full training Ngrams (10 times difference in data volume).
+
+It is possible to use for testing the validation data set as there was no tuning of backoff model done based on validation data set. Simple backoff model that we use has no tuning parameters.
+
+Results of extrinsic assessment for adjusted and full training Ngrams provide the similar **accuracy of prediction (12-13%)** of the 4th word based on previous 3 words. 
+
+As the volume of adjusted training Ngrams is 10 times lower compared to full Ngrams it makes sense to use the less memory consuming option. The prediction application will be using the **backoff algorithm with adjusted training Ngrams** (count > 1).
+
+Let’s investigate the dependence of the accuracy of prediction upon the length of the list of predicted words. The extrinsic assessment demonstrates the following correlation
+
+```{r prt11, echo=FALSE, results='asis', fig.width=4, fig.height=4}
+## plot accuracy vs list length
+
+backoff_N <- read.csv("backoff_N.csv")
+
+barplot(backoff_N$Accuracy, names.arg = backoff_N$N, xlab="Length of the list",
+        ylab="Accuracy", main="Prediction accuracy")
+```
+
+As we see the handy list of 5-10 words provides the reasonable accuracy of 35%. Prediction accuracy 50%+ requires the list of 50+ words that is rather long, 
+
+# Summary
+
+Based on the results of analysis the most efficient model for word prediction out of considered ones (backoff and interpolation) is the simple **backoff model based on adjusted training Ngrams** (N = 1-4, adjustment approach: for N >1 keep only Ngrams with word count > 1). 
+
+The total volume of adjusted Ngrams is less than 20MB. Computation for backoff model is simple and efficient. Both parameters are aligned with the requirements to prediction model for mobile devices.
+
+The accuracy of prediction of the 4th word based on previous 3 words is about **12-13%**. This is aligned with the “mental simulation”. If you are given 3 words you can provide 5-10 reasonable options of the 4th word to continue.
+
+One of the possible optimization solutions is to provide **several predicted words** with the highest probability. Provision of the list of 5-10 most probable words would increase the prediction accuracy to reasonable levels (35%+) while still keeping the application handy in use and “light” in terms of resources. From this perspective N-gram model is a good “light-weight” word prediction solution.
+
+Further **substantial increase** of the quality of word prediction can’t be achieved within N-gram framework. Different N-gram models can vary in performance but all them are limited with N-gram “key-hole” view based on sequence of N words only. 
+
+Substantial progress in word prediction requires to take into account the **wider context**: consider the topic of discussion; analyse statements and possible conclusions; identify words that indicate probable outcome; use skip-grams (non-adjacent occurrences); track inter-relations  … Here we are stepping into the area of generative AI and LLMs that is beyond the scope of current project.
+
+# ANNEX 
+
+### Program codes
+
+```{r prt_01_, eval=FALSE}
+## Preparation of combined ngrams - adjusted and non-adjusted, enriched with probability
+
+## Folders
+full_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US_full/"
+adjusted_folder <- "C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US/"
+current_folder <- adjusted_folder
+
+```
+
+
+```{r prt_02_, eval=FALSE}
+
+## merging ngram tables, converting them to prediction format
+## calculation of probability of last word for given set of previous words
+
+library(tidyr)
+
+prep_nfreq <- function(){
+        ## N-freq files preparation for adjusted and full Ngrams
+        ## reading Ngram files, keeping last 2 columns, adding "unk" to UniFreq
+        ## saving into separate folders
+        
+        
+        ## Adjusted Ngrams
+        ## Reading adjusted Ngrams
+        UniFreq1 <- read.csv("UniFreq1.csv")
+        gcol <- ncol(UniFreq1)
+        UniFreq1 <- UniFreq1[,(gcol-1):gcol]
+        BiFreq1 <- read.csv("BiFreq1.csv")
+        BiFreq1 <- BiFreq1[,(gcol-1):gcol]
+        TriFreq1 <- read.csv("TriFreq1.csv")
+        TriFreq1 <- TriFreq1[,(gcol-1):gcol]
+        TetFreq1 <- read.csv("TetFreq1.csv")
+        TetFreq1 <- TetFreq1[,(gcol-1):gcol]
+
+        ## add "unk" to unigram for missing words
+        UniFreq1[nrow(UniFreq1)+1,] <- c("unk",1)
+
+        UniFreq1$count <- as.numeric(UniFreq1$count)
+        BiFreq1$count <- as.numeric(BiFreq1$count)
+        TriFreq1$count <- as.numeric(TriFreq1$count)
+        TetFreq1$count <- as.numeric(TetFreq1$count)
+
+        ## save the files to current / adjusted folder
+        write.csv(UniFreq1,"UniFreq1.csv", row.names = FALSE)
+        write.csv(BiFreq1,"BiFreq1.csv", row.names = FALSE)
+        write.csv(TriFreq1,"TriFreq1.csv", row.names = FALSE)
+        write.csv(TetFreq1,"TetFreq1.csv", row.names = FALSE)
+        
+        ## Full Ngrams
+        ## Reading full Ngrams
+        UniFreq1 <- read.csv("UniFreq.csv")
+        gcol <- ncol(UniFreq1)
+        UniFreq1 <- UniFreq1[,(gcol-1):gcol]
+        BiFreq1 <- read.csv("BiFreq.csv")
+        BiFreq1 <- BiFreq1[,(gcol-1):gcol]
+        TriFreq1 <- read.csv("TriFreq.csv")
+        TriFreq1 <- TriFreq1[,(gcol-1):gcol]
+        TetFreq1 <- read.csv("TetFreq.csv")
+        TetFreq1 <- TetFreq1[,(gcol-1):gcol]
+
+        ## add "unk" to unigram for missing words
+        UniFreq1[nrow(UniFreq1)+1,] <- c("unk",1)
+
+        UniFreq1$count <- as.numeric(UniFreq1$count)
+        BiFreq1$count <- as.numeric(BiFreq1$count)
+        TriFreq1$count <- as.numeric(TriFreq1$count)
+        TetFreq1$count <- as.numeric(TetFreq1$count)
+
+        ## save the files to "full" folder
+        write.csv(UniFreq1,paste(full_folder,"UniFreq1.csv",sep = ""), row.names = FALSE)
+        write.csv(BiFreq1,paste(full_folder,"BiFreq1.csv",sep = ""), row.names = FALSE)
+        write.csv(TriFreq1,paste(full_folder,"TriFreq1.csv",sep = ""), row.names = FALSE)
+        write.csv(TetFreq1,paste(full_folder,"TetFreq1.csv",sep = ""), row.names = FALSE)
+
+}
+
+aggr_ngram(x,full){
+        ## aggregating ngrams into one file for convenience of analysis and modelling
+        ## splitting term column into input(history) and word(last word)
+        ## adding probability column
+        ## "x" - string, the folder to read and write the files
+        ## "full" - logical: whether Ngram is full (TRUE) or adjusted (FALSE)
+
+        ## read Ngrams1's
+        UniFreq1 <- read.csv(paste(x,"UniFreq1.csv",sep=""))
+        BiFreq1 <- read.csv(paste(x,"BiFreq1.csv",sep=""))
+        TriFreq1 <- read.csv(paste(x,"TriFreq1.csv",sep=""))
+        TetFreq1 <- read.csv(paste(x,"TetFreq1.csv",sep=""))
+
+        ## creation of total Ngram with probabilities
+
+        ## N=1
+        input <- rep("", nrow(UniFreq1)) ## adding formal input column
+        ngrm1 <- data.frame(input)
+        ngrm1$word <- UniFreq1$term
+        ngrm1$count <- UniFreq1$count
+        sum1 <- sum(ngrm1$count)
+        ngrm1$probability <- UniFreq1$count / sum1
+        ngrm1$n <- rep(1,nrow(UniFreq1)) ## adding column with n level
+        write.csv(ngrm1,paste(x,"ngrm1.csv",sep=""), row.names = FALSE)
+
+        ## N=2
+        ngrm2 <- BiFreq1
+        ngrm2$count <- as.numeric(ngrm2$count)
+        ngrm2 <- separate(ngrm2,"term",c("input","word"),sep=" ")
+        ngrm2$probability <- rep(1., nrow(BiFreq1))
+        ## for 2-gram I can not use 1-gram as "input" count as 
+        ## in 1-gram 1-2 letter words are excluded
+        for (i in 1:nrow(ngrm2)){
+        
+                sum_input <- sum(ngrm2[ngrm2$input==ngrm2$input[i],3])
+                ngrm2$probability[i] <- ngrm2$count[i] / sum_input
+                
+                ## count to monitor progress
+                ## i000 <- round(i/100)
+                ## if (i000*100 == i)print(i) 
+        }
+        ngrm2$n <- rep(2, nrow(BiFreq1))
+        write.csv(ngrm2,paste(x,"ngrm2.csv",sep=""), row.names = FALSE)
+
+        ## N=3
+        ngrm3 <- TriFreq1
+        ngrm3$count <- as.numeric(ngrm3$count)
+        ngrm3 <- separate(ngrm3,"term",c("input1","input2","word"),sep=" ")
+        ngrm3 <- unite(ngrm3,"input","input1","input2",sep=" ")
+        ngrm3$probability <- rep(1., nrow(TriFreq1))
+        for (i in 1:nrow(ngrm3)){
+                
+                sum_input <- if (full) {BiFreq1[BiFreq1$term==ngrm3$input[i],2]} 
+                        else {sum(ngrm3[ngrm3$input==ngrm3$input[i],3])}
+                ngrm3$probability[i] <- ngrm3$count[i] / sum_input
+        
+                ## i000 <- round(i/1000)
+                ## if (i000*1000 == i)print(i) 
+        }
+        ngrm3$n <- rep(3, nrow(TriFreq1))
+        write.csv(ngrm3,paste(x,"ngrm3.csv",sep=""), row.names = FALSE)
+
+        ## N=4
+        ngrm4 <- TetFreq1
+        ngrm4$count <- as.numeric(ngrm4$count)
+        ngrm4 <- separate(ngrm4,"term",c("input1","input2","input3","word"),sep=" ")
+        ngrm4 <- unite(ngrm4,"input","input1","input2","input3", sep=" ")
+        ngrm4$probability <- rep(1., nrow(TetFreq1))
+        for (i in 1:nrow(ngrm4)){
+                
+                sum_input <- if (full) {TriFreq1[TriFreq1$term==ngrm4$input[i],2]} 
+                        else {sum(ngrm4[ngrm4$input==ngrm4$input[i],3])}
+                
+                ngrm4$probability[i] <- ngrm4$count[i] / sum_input
+                
+                ## i000 <- round(i/1000)
+                ## if (i000*1000 == i)print(i) 
+        }
+        ngrm4$n <- rep(4, nrow(TetFreq1))
+        write.csv(ngrm4,paste(x,"ngrm4.csv",sep=""), row.names = FALSE)
+        
+        ## aggregated ngrm
+        ngrm <- rbind(ngrm1,ngrm2,ngrm3,ngrm4)
+        write.csv(ngrm,paste(x,"ngrm.csv",sep=""),row.names = FALSE)
+        
+        ## aggregated nfreq with pasted input and word columns - for perplexity
+        nfreq <- unite(ngrm,"term","input","word",sep=" ")
+        write.csv(nfreq,paste(x,"nfreq.csv",sep=""),row.names = FALSE)
+
+        rm(UniFreq1, BiFreq1, TriFreq1, TetFreq1)
+
+}
+
+## creation of aggregated files for full and adjusted Ngrams
+prep_nfreq() 
+aggr_ngram(full_folder,TRUE)
+aggr_ngram(adjusted_folder,FALSE)
+
+```
+
+```{r prt03_, eval=FALSE}
+## perplexity for training data
+
+perp_ngrm <- function(x){
+        ## calculates perplexities for given "x" (=ngrm) for N = 1, 2, 3, 4 
+        N_1 <- c(round(exp(sum( -log(x[x$n==1,4]) * x[x$n==1,3] ) / sum(x[x$n==1,3])),0)) 
+        N_2 <- c(round(exp(sum( -log(x[x$n==2,4]) * x[x$n==2,3] ) / sum(x[x$n==2,3])),0))
+        N_3 <- c(round(exp(sum( -log(x[x$n==3,4]) * x[x$n==3,3] ) / sum(x[x$n==3,3])),0)) 
+        N_4 <- c(round(exp(sum( -log(x[x$n==4,4]) * x[x$n==4,3] ) / sum(x[x$n==4,3])),1))
+
+        metric <- c("Perplexity")
+        summary_perp1 <- data.frame(metric,N_1,N_2,N_3,N_4)
+        
+        summary_perp1
+}
+
+library(knitr)
+
+ngrm <- read.csv("C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US_full/ngrm.csv")
+summary_perp2 <- perp_ngrm(ngrm)
+cat("Non-adjusted (full) Ngrams \n")
+kable(summary_perp2)
+
+ngrm <- read.csv("C:/Users/pavel/Documents/GitHub/Capstone_Project/Coursera-SwiftKey/final/en_US/ngrm.csv")
+summary_perp2 <- perp_ngrm(ngrm)
+cat("Adjusted Ngrams \n")
+kable(summary_perp2)
+rm(ngrm)
+```
+
+```{r prt04_, eval=FALSE}
+## preparation of validation and testing tetragrams
+
+tetra_prep <- function(x,y=1){
+        ## preparation of validation and testing tetragrams
+        ## x = "validation" or "testing". y = part of sample to take
+        
+        if(!(x %in% c("validation","testing"))) return(NA)
+        
+        sample.all <- readLines(paste(x,"_data.txt",sep=""))
+        sample.all <- sample.all[1:(length(sample.all)*y)]
+        
+        ## Cleaning of data sub-set
+
+        suppressPackageStartupMessages(library(NLP))
+        suppressPackageStartupMessages(library(tm))
+        suppressPackageStartupMessages(library(stringi))
+        suppressPackageStartupMessages(library(stringr))
+
+        corpus <- VCorpus(VectorSource(sample.all))
+        corpus <- tm_map(corpus, content_transformer(tolower))
+        corpus <- tm_map(corpus, removeNumbers)
+        corpus <- tm_map(corpus, content_transformer(function(x){str_replace_all(x, "[^[\\da-zA-Z - ' ]]"," ")}))
+        corpus <- tm_map(corpus, content_transformer(function(x){removePunctuation(x, preserve_intra_word_contractions = TRUE, preserve_intra_word_dashes = TRUE)}))
+        corpus <- tm_map(corpus, stripWhitespace)
+
+        saveRDS(corpus,file=paste("cleaned_",x,"_corpus.Rds",sep=""))
+
+        cat(paste("Cleaned corpus",x,"text file:",length(corpus)," lines, ",round(object.size(corpus)/1000000,0)," MB \n\n"))
+
+        rm(sample.all)
+        
+        ## Tetragram creation and analysis
+
+        suppressPackageStartupMessages(library(ggplot2))
+        suppressPackageStartupMessages(library(gridExtra))
+        suppressPackageStartupMessages(library(wordcloud2))
+        suppressPackageStartupMessages(library(tidytext))
+        suppressPackageStartupMessages(library(dplyr))
+        suppressPackageStartupMessages(library(tidyr))
+
+        ## Tokenizing function (NLP)
+        myTokenizer4 <- function(x) {
+                unlist(lapply(ngrams(words(x), 4), paste, collapse = " "), use.names = FALSE)
+        }
+        
+        TetGram <- TermDocumentMatrix(corpus, control = list(tokenize = myTokenizer4))
+        TetGram <- tidy(TetGram)
+        TetFreq <- aggregate(count~term,TetGram,sum)
+        TetFreq <- arrange(TetFreq,desc(count))
+        
+        rm(corpus)
+        
+        TetFreq
+
+}
+```
+
+```{r prt05_, eval=FALSE}
+## creation of validation tetragram
+
+library(knitr)
+        
+val <- tetra_prep("validation", 0.1) ## taking 10% of validation data set
+
+metric <- c("total terms","frequency >1","size MB")
+
+Ngram4 <- c(nrow(val),nrow(val[val$count>1,]),round(object.size(val)/1000000,0))
+        
+Ngram_summary <- data.frame(metric, Ngram4)
+write.csv(Ngram_summary,"validation summary",row.names = FALSE)
+        
+cat(paste("validation","tetragram summary \n"))
+        
+kable(Ngram_summary, align='l')
+
+write.csv(val,"validation_4gram.csv", row.names=FALSE)
+
+```
+
+
+```{r prt06_, eval=FALSE}
+
+val <- read.csv("validation_4gram.csv")
+
+library(dplyr)
+nlines <- 10000
+set.seed(7654)
+
+val1 <- slice_sample(val,n=nlines) ## randomly selected "nlines" from val
+write.csv(val1,"selected_validation_4gram.csv",row.names = FALSE)
+
+```
+
+```{r prt07_, eval=FALSE}
+
+prob_vector <- function(x, pm){
+        ## calculation of probabilities for given 4-gram "x" based on testing Ngrams
+        ## "pm" - probability assigned to missing words
+        ## uses aggregated nfreq based on testing data with probabilities
+        ## appr 1000 lines of validation set / minute
+        
+        library(stringr)
+        
+        words <- str_split_1(x, " ") ## split x to vector of words
+        
+        prob <- c(0.,0.,0.,0.) ## vector of probabilities
+        
+        p4 <- nfreq[nfreq$n==4 & nfreq$term==paste(words[1:4],collapse=" "),3]
+        prob[4] <- if(identical(p4,numeric(0))){0} else {p4}
+        p3 <- nfreq[nfreq$n==3 & nfreq$term==paste(words[2:4],collapse=" "),3]
+        prob[3] <- if(identical(p3,numeric(0))){0} else {p3}
+        p2 <- nfreq[nfreq$n==2 & nfreq$term==paste(words[3:4],collapse=" "),3]
+        prob[2] <- if(identical(p2,numeric(0))){0} else {p2}
+        p1 <- nfreq[nfreq$n==1 & nfreq$term==words[4],3]
+        prob[1] <- if(identical(p1,numeric(0))){pm} else {p1}
+        
+        prob
+        
+}
+
+val1 <- read.csv("selected_validation_4gram.csv")
+
+## calculation of probability matrix (df) for adjusted Ngrams
+nfreq <- read.csv("nfreq.csv")
+
+pmiss <- nfreq[nfreq$n==1 & nfreq$term == "unk",3] ## min probability assigned to missing words
+
+for (i in 1:nrow(val1)){
+        prob <- prob_vector(val1$term[i], pmiss)
+        prob <- as.data.frame(t(prob))
+        
+        ## i000 <- round(i/100)
+        ## if (i000*100 == i)print(i)
+        
+        prob_df <- if(i==1){prob} else {rbind(prob_df,prob)}
+        
+}
+write.csv(prob_df,"prob_df.csv")
+
+## calculation of probability matrix (df) for full Ngrams
+nfreq <- read.csv(paste(full_folder,"nfreq.csv",sep=""))
+
+pmiss <- nfreq[nfreq$n==1 & nfreq$term == "unk",3] ## min probability assigned to missing words
+
+for (i in 1:nrow(val1)){
+        prob <- prob_vector(val1$term[i], pmiss)
+        prob <- as.data.frame(t(prob))
+        
+        ## i000 <- round(i/100)
+        ## if (i000*100 == i)print(i)
+        
+        prob_df <- if(i==1){prob} else {rbind(prob_df,prob)}
+        
+}
+write.csv(prob_df,paste(full_folder,"prob_df.csv",sep=""))
+
+count_vector <- function(x){
+        ## calculation of counts for history of given 4-gram "x" based on testing Ngrams
+        ## uses aggregated ngrm based on testing data with probabilities
+        ## appr 3000 lines of validation set / minute
+        
+        words <- str_split_1(x, " ") ## split x to vector of words
+        
+        cnt <- c(0.,0.,0.,0.) ## vector of counts for given history
+        
+        c4 <- sum(ngrm[ngrm$n==4 & ngrm$input==paste(words[1:3],collapse=" "),3])
+        cnt[4] <- if(identical(c4,numeric(0))){0} else {c4}
+        c3 <- sum(ngrm[ngrm$n==3 & ngrm$input==paste(words[2:3],collapse=" "),3])
+        cnt[3] <- if(identical(c3,numeric(0))){0} else {c3}
+        c2 <- sum(ngrm[ngrm$n==2 & ngrm$input==words[3],3])
+        cnt[2] <- if(identical(c2,numeric(0))){0} else {c2}
+        c1 <- sum(ngrm[ngrm$n==1,3])
+        cnt[1] <- if(identical(c1,numeric(0))){1} else {c1} ## min count for unk
+        
+        cnt
+        
+}
+
+## creation of count df for validation 4grams
+library(stringr)
+
+## For adjusted Ngrams
+ngrm <- read.csv("ngrm.csv")
+
+for (i in 1:nrow(val1)){
+        cnt <- count_vector(val1$term[i])
+        cnt <- as.data.frame(t(cnt))
+        
+        i000 <- round(i/100)
+        if (i000*100 == i)print(i)
+        
+        count_df <- if(i==1){cnt} else {rbind(count_df,cnt)}
+        
+}
+write.csv(count_df,"count_df.csv", row.names = FALSE)
+
+## For full Ngrams
+ngrm <- read.csv(paste(full_folder,"ngrm.csv",sep=""))
+
+for (i in 1:nrow(val1)){
+        cnt <- count_vector(val1$term[i])
+        cnt <- as.data.frame(t(cnt))
+        
+        i000 <- round(i/100)
+        if (i000*100 == i)print(i)
+        
+        count_df <- if(i==1){cnt} else {rbind(count_df,cnt)}
+        
+}
+write.csv(count_df,paste(full_folder,"count_df.csv",sep=""), row.names = FALSE)
+
+```
+
+```{r prt08_, eval=FALSE, fig.width=4, fig.height=4}
+perp_backoff <- function(x,y){
+        
+        ## '-log' of probability with normalization and N level calculation 
+        ## for backoff model
+        ## input "x" - probability matrix, "y" - count matrix
+        
+        perplexity <- c()
+        ng <- c() ## N grams used
+        
+        for (i in 1:nrow(x) ){
+                np <- 1
+                if (x[i,2]!=0) np <- 2
+                if (x[i,3]!=0) np <- 3
+                if (x[i,4]!=0) np <- 4
+                ## prp <- 1 / x[i,np]
+                prob <- y[i,np] * x[i,np] / sum(y[i,np:4]) ## normalized probability
+                prp <- -log(prob) * val1$count[i] ## -ln(P)
+                perplexity <- c(perplexity,prp)
+                ng <- c(ng,np)
+        }
+        
+        result <- data.frame(perplexity,ng)
+        
+        as.data.frame(result)
+        
+}
+
+val1 <- read.csv("selected_validation_4gram.csv")
+
+## Adjusted Ngrams
+prob_df <- read.csv("prob_df.csv")
+count_df <- read.csv("count_df.csv")
+
+backoff <- perp_backoff(prob_df, count_df)
+
+perp_b <- exp(sum(backoff$perplexity) / sum(val1$count))
+
+cat(paste("Perplexity: backoff model, adjusted Ngrams - ", round(perp_b, 0)))
+cat("\n"); cat("\n")
+
+## creation of vector for N levels used
+ng_b <- c()
+for (i in 1:nrow(val1)){
+        ng_b <- c(ng_b,rep(backoff$ng[i],val1$count[i]))
+}
+cat("Backoff model: Ngram distribution, adjusted Ngrams \n")
+cat("\n"); cat("\n")
+hist(ng_b, breaks = c(0.5,1.5,2.5,3.5,4.5), xlab = "Level of Ngram used", main = "Back-off model")
+
+## Full Ngrams
+prob_df <- read.csv(paste(full_folder,"prob_df.csv",sep=""))
+count_df <- read.csv(paste(full_folder,"count_df.csv",sep=""))
+
+backoff <- perp_backoff(prob_df, count_df)
+
+perp_b <- exp(sum(backoff$perplexity) / sum(val1$count))
+cat("\n\n")
+cat(paste("Perplexity: backoff model, full Ngrams - ", round(perp_b, 0)))
+cat("\n"); cat("\n")
+
+## creation of vector for N levels used
+ng_b <- c()
+for (i in 1:nrow(val1)){
+        ng_b <- c(ng_b,rep(backoff$ng[i],val1$count[i]))
+}
+cat("Backoff model: Ngram distribution, full Ngrams \n")
+cat("\n"); cat("\n")
+hist(ng_b, breaks = c(0.5,1.5,2.5,3.5,4.5), xlab = "Level of Ngram used", main = "Back-off model")
+
+```
+
+```{r prt09_, eval=FALSE}
+## interpolation model
+
+perp_inter <- function(x, y){
+        
+        ## calculates '-log' of probability for interpolation model
+        ## input - "x" probability df, "y" - lambda vector
+        ## output - -log of probability vector for given probability df
+        
+        perplexity <- c()
+        
+        for (i in 1:nrow(x) ){
+                prp <- -log(y[1]*x[i,1]+y[2]*x[i,2]+y[3]*x[i,3]+y[4]*x[i,4])*val1$count[i]
+                perplexity <- c(perplexity,prp)
+        }
+        
+        result <- perplexity
+        
+        result
+        
+}
+
+## Adjusted Ngrams
+prob_df <- read.csv("prob_df.csv")
+
+lambda <- c(0.25,0.25,0.25,0.25)
+
+niter <- 1000 ## number of iterations
+perp_min <- 100000000
+set.seed(8765)
+
+for (ii in 1:niter){
+        ## monte carlo search of lambda that minimize perplexity
+        lmb <- runif(4)
+        lmb <- lmb / sum(lmb) ## normalised lambdas
+        
+        interpolation <- perp_inter(prob_df,lmb)
+        
+        if (exp(sum(interpolation) / sum(val1$count)) < perp_min){
+                perp_min <- exp(sum(interpolation) / sum(val1$count))
+                lambda <- lmb
+        }
+        
+        i000 <- round(ii/10)
+        if (i000*10 == ii)print(ii)
+                
+}
+
+cat("\n")
+cat("Interpolation model, adjusted Ngrams \n")
+
+barplot(lambda, names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model")
+
+cat(paste("Perplexity - ",round(perp_min,0)))
+cat("\n")
+
+## Full Ngrams
+prob_df <- read.csv(paste(full_folder,"prob_df.csv",sep=""))
+
+lambda <- c(0.25,0.25,0.25,0.25)
+
+niter <- 1000 ## number of iterations
+perp_min <- 100000000
+set.seed(8765)
+
+for (ii in 1:niter){
+        ## monte carlo search of lambda that minimize perplexity
+        lmb <- runif(4)
+        lmb <- lmb / sum(lmb) ## normalised lambdas
+        
+        interpolation <- perp_inter(prob_df,lmb)
+        
+        if (exp(sum(interpolation) / sum(val1$count)) < perp_min){
+                perp_min <- exp(sum(interpolation) / sum(val1$count))
+                lambda <- lmb
+        }
+        
+        ## i000 <- round(ii/10)
+        ## if (i000*10 == ii)print(ii)
+                
+}
+
+cat("\n")
+cat("Interpolation model, adjusted Ngrams \n")
+
+barplot(lambda, names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model")
+
+cat(paste("Perplexity - ",round(perp_min,0)))
+cat("\n")
+
+
+```
+
+```{r prt10_, eval=FALSE, results='asis', fig.width=4, fig.height=4}
+## Adjusted Ngrams
+cat(" \n")
+cat(paste("\n Perplexity: interpolation model, adjusted Ngrams -", round(read.csv("int_perp.csv"),0)))
+cat("\n"); cat("\n")
+barplot(read.csv("lambda.csv")[,1], names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model - adjusted")
+cat(" \n")
+
+##Full Ngrams
+cat(" \n")
+cat(paste("\n Perplexity: interpolation model, full Ngrams -", round(read.csv(paste(full_folder,"int_perp.csv",sep="")),0)))
+cat(" \n")
+cat(" \n")
+barplot(read.csv(paste(full_folder,"lambda.csv",sep=""))[,1], names.arg = c("1","2","3","4"), xlab="Level of Ngram",ylab="Lambda", main="Interpolation model - full")
+cat("\n\n")
+
+```
+
+```{r prt11_, eval=FALSE, results='asis', fig.width=4, fig.height=4}
+## plot accuracy vs list length
+
+backoff_N <- read.csv("backoff_N.csv")
+
+barplot(backoff_N$Accuracy, names.arg = backoff_N$N, xlab="Length of the list",
+        ylab="Accuracy", main="Prediction accuracy")
+```
