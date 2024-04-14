@@ -1,0 +1,55 @@
+---
+title: "Data Science Specialization \n\nCapstone project"
+author: "John Hopkins University \n\nPavel Zakharov"
+date: "2024-04-16"
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+        
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Project objectives
+
+In many applications or devices when we are typing it is very helpful to have the list of next word options to select. It can really simplify and speed up the typing process. However, such word prediction is usually a complicated and resource consuming task.
+
+If we imagine ourselves predicting the next word based on previous conversation, we understand that it is enormously difficult task that should be taking into account a lot of factors. Even for the human being the probability of prediction of **one** specific word is not high, there are always **5-10 words** that match the previous text. English vocabulary has more than 170.000 words, so there are many ways to express yourself!
+
+The objective of the current project was to build the word prediction model that could work on practically any device and realize it in demonstration application. 
+
+Such application should be "light" in terms of memory consumption (several dozens of MB as a maximum) and in terms of computing speed (computing time should be “immediate”, less than a second).
+
+# Solution development
+
+Based on the solution requirements it was clear that the most advanced NLP models (generative AI, LLMs) are too "heavy" for our purposes. It has been decided to develop the solution based on well developed N-gram approach.
+
+N-gram is the sequence of adjacent N words. Within the N-gram approach it is assumed that the probability of the next word depends upon N previous words only (Markov assumption). Such assumption drastically simplifies the prediction process. On the other hand it restricts the accuracy of word prediction as you are looking on the text through the "key-hole" of N words only.
+
+There are dozens of N-gram models with some variations of training and prediction process. All N-gram models are "trained" on some pool of texts. They use the extracted training data sets and other training data insights to predict the next word in the real text based on probability. The model complexity and the size of data sets they use vary substantially.
+
+To develop the efficient solution it was required to identify the N-gram prediction model with good performance and to define the size of data set for it to use. To achieve this objective we have compared the performance of 2 very popular N-gram models (backoff and interpolation) with levels of N-gams from 1 to 4 using 2 training data sets of different size (20MB and 250MB+). All details of solution development are provided by link [**here**](https://rpubs.com/pzakharo0/1172867).
+
+# Solution description
+
+Comparison of backoff and interpolation models has demonstrated that backoff model has higher prediction quality on both training data sets of different size. In addition it has simpler and faster computation algorithm: the program goes down by levels of N-grams until it finds the input text; after this the words with the highest probability are selected for prediction.
+
+Further investigation of the backoff model brought to the conclusion that the prediction quality is approximately same for 20MB and 250MB+ training data sets. That allowed to reduce the memory usage to 20MB and increase the calculation speed. The accuracy of prediction is about 30% for the list of 5 predicted words and 35% for 10 predicted words. The speed of calculation is really "on the fly". This the great "light-weight" word prediction solution!
+
+The described model has been implemented for demonstration purposes in small application solution [**(link here)**](https://pavelppz.shinyapps.io/Capstone_project_word_prediction/). It allows to select the number of predicted words (from 1 to 10), enter the input text, see the results of text cleaning and obtain the list of predicted words.
+
+We do believe that such "light" word prediction solution can be very handy to use with many applications and on many devices. In many cases it allows to select "on the fly" the next word instead of typing that saves a lot of time.
+
+# Summary
+
+We are presenting the efficient "light" word prediction solution based on N-gram backoff model. It requires only 20MB of memory and works "on the fly". It can be implemented on practically any device.
+
+This solution provides you with the list of predicted next words based on the text you are typing. That allows you to save time by just selecting the next word instead of typing it. 
+
+The accuracy of prediction for the list of 5-10 predicted words is about 35%. So in 1/3 of cases you can just click on the proposed word instead of typing it!
+
+It is not possible to increase substantially the quality of word prediction within N-gram framework we used. Further progress in word prediction accuracy requires to take into account the **wider context**: consider the topic of discussion; analyse statements and possible conclusions; identify words that indicate probable outcome; use skip-grams (non-adjacent occurrences); track inter-relations … 
+
+This is the area of the "heavy weight" generative AI and LLM solutions that can provide better word prediction accuracy but with **much higher** requirements to resources.
